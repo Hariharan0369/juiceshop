@@ -3,12 +3,12 @@
   "version": "1.0.0",
   "description": "Full-stack juice subscription website",
   "scripts": {
-    "dev:frontend": "cd frontend && vite",
+    "dev:frontend": "cd frontend && npm run dev",
     "dev:backend": "node api/index.js",
     "dev": "npm run dev:backend & npm run dev:frontend",
-    "build": "cd frontend && vite build",
+    "build": "cd frontend && npm install && npm run build",
     "start": "node api/index.js",
-    "install:all": "npm install && cd frontend && npm install && cd ../backend && npm install"
+    "install:all": "npm install && cd frontend && npm install"
   },
   "dependencies": {
     "cors": "^2.8.5",
