@@ -3,42 +3,37 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const path = require('path');
+const multer = require('multer');
 const { createClient } = require('@libsql/client');
 
 const app = express();
 const JWT_SECRET = process.env.JWT_SECRET || 'nature_juice_secret_2024_xK9mP';
 
-// Turso Connection
 const client = createClient({
   url: process.env.TURSO_DATABASE_URL || 'libsql://nature-juice-db-hariharan0369.aws-ap-south-1.turso.io',
   authToken: process.env.TURSO_AUTH_TOKEN || 'eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3NzYxNDg2ODUsImlkIjoiMDE5ZDhhYjQtZTEwMS03NTMwLTgyODEtNDc0NjJiYTliYzE4IiwicmlkIjoiNmEzYjIyODUtODQ0Ny00NTExLWJlMTYtMDU3NTQ2NTYyYTU0In0.F0JxFbzcLC2s1YAZsJg2OosCdmj0Nzddrvacw4bIpqBAprjf8HSPBGUrpB3g99KytquFjqtWB72-hAP8zX-5AA',
 });
 
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+// Configure Multer for transient uploads (Vercel /tmp)
+const storage = multer.diskStorage({
+  destination: '/tmp',
+  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+});
+const upload = multer({ storage });
 
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(UPLOADS_DIR));
 
-// DB Wrapper for Turso (Async)
+// DB Wrapper
 const db = {
-  async execute(sql, params = []) {
-    return await client.execute({ sql, args: params });
-  },
-  async get(sql, params = []) {
-    const res = await client.execute({ sql, args: params });
-    return res.rows[0];
-  },
-  async all(sql, params = []) {
-    const res = await client.execute({ sql, args: params });
-    return res.rows;
-  }
+  async execute(sql, params = []) { return await client.execute({ sql, args: params }); },
+  async get(sql, params = []) { const res = await client.execute({ sql, args: params }); return res.rows[0]; },
+  async all(sql, params = []) { const res = await client.execute({ sql, args: params }); return res.rows; }
 };
 
 let isInitialized = false;
 async function ensureInit() {
   if (isInitialized) return;
-  
   await db.execute(`CREATE TABLE IF NOT EXISTS admin (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS site_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS benefits (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT NOT NULL, icon TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, sort_order INTEGER DEFAULT 0)`);
@@ -46,7 +41,6 @@ async function ensureInit() {
   await db.execute(`CREATE TABLE IF NOT EXISTS enquiries (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, juice_type TEXT NOT NULL, plan TEXT, message TEXT, status TEXT DEFAULT 'new', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, rating INTEGER NOT NULL, juice_type TEXT, comment TEXT NOT NULL, is_approved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS juice_images (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT UNIQUE NOT NULL, filename TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-
   const admin = await db.get('SELECT id FROM admin WHERE username = ?', ['admin']);
   if (!admin) {
     const hash = crypto.createHash('sha256').update('NatureJuice@2024').digest('hex');
@@ -62,14 +56,13 @@ function authMiddleware(req, res, next) {
   catch { res.status(401).json({ error: 'Invalid token' }); }
 }
 
-// API Routes
+// Routes
 app.post('/api/admin/login', async (req, res) => {
   await ensureInit();
   const { username, passwordHash } = req.body;
   const admin = await db.get('SELECT * FROM admin WHERE username = ?', [username]);
   if (!admin || admin.password_hash !== passwordHash) return res.status(401).json({ error: 'Invalid credentials' });
-  const token = jwt.sign({ username: admin.username, id: admin.id }, JWT_SECRET, { expiresIn: '8h' });
-  res.json({ token });
+  res.json({ token: jwt.sign({ username: admin.username, id: admin.id }, JWT_SECRET, { expiresIn: '8h' }) });
 });
 
 app.put('/api/admin/password', authMiddleware, async (req, res) => {
@@ -84,8 +77,7 @@ app.put('/api/admin/password', authMiddleware, async (req, res) => {
 app.get('/api/config', async (req, res) => {
   await ensureInit();
   const rows = await db.all('SELECT key, value FROM site_config');
-  const config = {};
-  rows.forEach(r => config[r.key] = r.value);
+  const config = {}; rows.forEach(r => config[r.key] = r.value);
   res.json(config);
 });
 
@@ -175,14 +167,22 @@ app.get('/api/juice-images', async (req, res) => {
   res.json(await db.all('SELECT * FROM juice_images'));
 });
 
-// Export app for Vercel
+app.post('/api/admin/juice-images/:type', authMiddleware, upload.single('image'), async (req, res) => {
+  await ensureInit();
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  // Note: On Vercel serverless, file storage is not persistent. 
+  // You would ideally use Cloudinary or S3 here.
+  const type = req.params.type;
+  const filename = req.file.filename;
+  const exists = await db.get('SELECT id FROM juice_images WHERE juice_type=?', [type]);
+  if (exists) await db.execute('UPDATE juice_images SET filename=?,updated_at=CURRENT_TIMESTAMP WHERE juice_type=?', [filename, type]);
+  else await db.execute('INSERT INTO juice_images(juice_type,filename) VALUES(?,?)', [type, filename]);
+  res.json({ filename });
+});
+
 module.exports = app;
 
-// Add this for local development
 if (require.main === module) {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`\n🚀 Backend Server running at http://localhost:${PORT}`);
-    console.log(`🌍 Connected to Turso Cloud Database`);
-  });
+  app.listen(PORT, () => console.log(`🚀 Server: http://localhost:${PORT}`));
 }
