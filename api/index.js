@@ -80,6 +80,24 @@ function authMiddleware(req, res, next) {
 }
 
 // Routes
+app.get('/api/init', async (req, res) => {
+  await ensureInit();
+  const [configRows, benefits, plans, reviews, images] = await Promise.all([
+    db.all('SELECT key, value FROM site_config'),
+    db.all('SELECT * FROM benefits ORDER BY juice_type, sort_order'),
+    db.all('SELECT * FROM plans WHERE is_active=1 ORDER BY juice_type, price'),
+    db.all('SELECT * FROM reviews WHERE is_approved=1 ORDER BY created_at DESC'),
+    db.all('SELECT * FROM juice_images')
+  ]);
+  
+  const config = {};
+  configRows.forEach(r => config[r.key] = r.value);
+  
+  plans.forEach(r => { try { r.features = JSON.parse(r.features); } catch { r.features = []; } });
+  
+  res.json({ config, benefits, plans, reviews, images });
+});
+
 app.post('/api/admin/login', async (req, res) => {
   await ensureInit();
   const { username, passwordHash } = req.body;

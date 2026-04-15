@@ -444,19 +444,16 @@ export default function Home() {
   const hideToast = () => setToast(null)
 
   useEffect(() => {
-    Promise.all([
-      axios.get('/api/config'),
-      axios.get('/api/benefits'),
-      axios.get('/api/plans'),
-      axios.get('/api/reviews'),
-      axios.get('/api/juice-images'),
-    ]).then(([cfg, ben, pln, rev, img]) => {
-      setConfig(cfg.data)
-      setBenefits(ben.data)
-      setPlans(pln.data)
-      setReviews(rev.data)
-      setImages(img.data)
-    }).catch(console.error)
+    axios.get('/api/init')
+      .then(res => {
+        const { config, benefits, plans, reviews, images } = res.data;
+        setConfig(config);
+        setBenefits(benefits);
+        setPlans(plans);
+        setReviews(reviews);
+        setImages(images);
+      })
+      .catch(console.error);
   }, [])
 
   const submitReview = async (data) => {
