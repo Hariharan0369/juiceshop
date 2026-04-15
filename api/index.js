@@ -34,37 +34,42 @@ const db = {
 };
 
 let isInitialized = false;
+let initPromise = null;
 async function ensureInit() {
   if (isInitialized) return;
-  await db.execute(`CREATE TABLE IF NOT EXISTS admin (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS site_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS benefits (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT NOT NULL, icon TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, sort_order INTEGER DEFAULT 0)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL, duration TEXT NOT NULL, features TEXT NOT NULL, is_popular INTEGER DEFAULT 0, is_active INTEGER DEFAULT 1)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS enquiries (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, juice_type TEXT NOT NULL, plan TEXT, message TEXT, status TEXT DEFAULT 'new', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, rating INTEGER NOT NULL, juice_type TEXT, comment TEXT NOT NULL, is_approved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  await db.execute(`CREATE TABLE IF NOT EXISTS juice_images (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT UNIQUE NOT NULL, filename TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
-  
-  const admin = await db.get('SELECT id FROM admin WHERE username = ?', ['admin']);
-  if (!admin) {
-    const hash = crypto.createHash('sha256').update('NatureJuice@2024').digest('hex');
-    await db.execute('INSERT INTO admin (username, password_hash) VALUES (?, ?)', ['admin', hash]);
+  if (!initPromise) {
+    initPromise = (async () => {
+      await db.execute(`CREATE TABLE IF NOT EXISTS admin (id INTEGER PRIMARY KEY, username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS site_config (key TEXT PRIMARY KEY, value TEXT NOT NULL)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS benefits (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT NOT NULL, icon TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL, sort_order INTEGER DEFAULT 0)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS plans (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT NOT NULL, name TEXT NOT NULL, price INTEGER NOT NULL, duration TEXT NOT NULL, features TEXT NOT NULL, is_popular INTEGER DEFAULT 0, is_active INTEGER DEFAULT 1)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS enquiries (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, juice_type TEXT NOT NULL, plan TEXT, message TEXT, status TEXT DEFAULT 'new', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, rating INTEGER NOT NULL, juice_type TEXT, comment TEXT NOT NULL, is_approved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS juice_images (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT UNIQUE NOT NULL, filename TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+      
+      const admin = await db.get('SELECT id FROM admin WHERE username = ?', ['admin']);
+      if (!admin) {
+        const hash = crypto.createHash('sha256').update('NatureJuice@2024').digest('hex');
+        await db.execute('INSERT INTO admin (username, password_hash) VALUES (?, ?)', ['admin', hash]);
+      }
+      
+      // Default config
+      const configs = [
+        ['hero_headline','Pure Nature. Daily Freshness.'],
+        ['hero_subheadline','Daily-pressed coconut milk & amla juice delivered to your door'],
+        ['hero_tagline','100% Natural • No Preservatives • Farm to Glass'],
+        ['contact_phone','+91 98765 43210'],
+        ['contact_email','hello@naturejuice.in'],
+        ['contact_address','Mumbai, Maharashtra'],
+      ];
+      for (const [k,v] of configs) {
+        const exists = await db.get('SELECT key FROM site_config WHERE key=?', [k]);
+        if (!exists) await db.execute('INSERT INTO site_config(key,value) VALUES(?,?)', [k,v]);
+      }
+      isInitialized = true;
+    })();
   }
-  
-  // Default config
-  const configs = [
-    ['hero_headline','Pure Nature. Daily Freshness.'],
-    ['hero_subheadline','Daily-pressed coconut milk & amla juice delivered to your door'],
-    ['hero_tagline','100% Natural • No Preservatives • Farm to Glass'],
-    ['contact_phone','+91 98765 43210'],
-    ['contact_email','hello@naturejuice.in'],
-    ['contact_address','Mumbai, Maharashtra'],
-  ];
-  for (const [k,v] of configs) {
-    const exists = await db.get('SELECT key FROM site_config WHERE key=?', [k]);
-    if (!exists) await db.execute('INSERT INTO site_config(key,value) VALUES(?,?)', [k,v]);
-  }
-  
-  isInitialized = true;
+  return initPromise;
 }
 
 function authMiddleware(req, res, next) {
