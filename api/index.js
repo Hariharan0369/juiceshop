@@ -23,6 +23,8 @@ const upload = multer({ storage });
 
 app.use(cors());
 app.use(express.json());
+app.use('/uploads', express.static('/tmp'));
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
 
 // DB Wrapper
 const db = {
@@ -41,11 +43,27 @@ async function ensureInit() {
   await db.execute(`CREATE TABLE IF NOT EXISTS enquiries (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, phone TEXT NOT NULL, email TEXT, juice_type TEXT NOT NULL, plan TEXT, message TEXT, status TEXT DEFAULT 'new', created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS reviews (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, rating INTEGER NOT NULL, juice_type TEXT, comment TEXT NOT NULL, is_approved INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
   await db.execute(`CREATE TABLE IF NOT EXISTS juice_images (id INTEGER PRIMARY KEY AUTOINCREMENT, juice_type TEXT UNIQUE NOT NULL, filename TEXT NOT NULL, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)`);
+  
   const admin = await db.get('SELECT id FROM admin WHERE username = ?', ['admin']);
   if (!admin) {
     const hash = crypto.createHash('sha256').update('NatureJuice@2024').digest('hex');
     await db.execute('INSERT INTO admin (username, password_hash) VALUES (?, ?)', ['admin', hash]);
   }
+  
+  // Default config
+  const configs = [
+    ['hero_headline','Pure Nature. Daily Freshness.'],
+    ['hero_subheadline','Daily-pressed coconut milk & amla juice delivered to your door'],
+    ['hero_tagline','100% Natural • No Preservatives • Farm to Glass'],
+    ['contact_phone','+91 98765 43210'],
+    ['contact_email','hello@naturejuice.in'],
+    ['contact_address','Mumbai, Maharashtra'],
+  ];
+  for (const [k,v] of configs) {
+    const exists = await db.get('SELECT key FROM site_config WHERE key=?', [k]);
+    if (!exists) await db.execute('INSERT INTO site_config(key,value) VALUES(?,?)', [k,v]);
+  }
+  
   isInitialized = true;
 }
 
@@ -103,6 +121,19 @@ app.post('/api/admin/benefits', authMiddleware, async (req, res) => {
   res.json({ id: Number(r.lastInsertRowid) });
 });
 
+app.put('/api/admin/benefits/:id', authMiddleware, async (req, res) => {
+  await ensureInit();
+  const { icon, title, description, sort_order } = req.body;
+  await db.execute('UPDATE benefits SET icon=?,title=?,description=?,sort_order=? WHERE id=?', [icon, title, description, sort_order, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/benefits/:id', authMiddleware, async (req, res) => {
+  await ensureInit();
+  await db.execute('DELETE FROM benefits WHERE id=?', [req.params.id]);
+  res.json({ success: true });
+});
+
 app.get('/api/plans', async (req, res) => {
   await ensureInit();
   const rows = await db.all('SELECT * FROM plans WHERE is_active=1 ORDER BY juice_type, price');
@@ -150,16 +181,46 @@ app.post('/api/enquiries', async (req, res) => {
   res.json({ id: Number(r.lastInsertRowid), success: true });
 });
 
+app.put('/api/admin/enquiries/:id/status', authMiddleware, async (req, res) => {
+  await ensureInit();
+  await db.execute('UPDATE enquiries SET status=? WHERE id=?', [req.body.status, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/enquiries/:id', authMiddleware, async (req, res) => {
+  await ensureInit();
+  await db.execute('DELETE FROM enquiries WHERE id=?', [req.params.id]);
+  res.json({ success: true });
+});
+
 app.get('/api/reviews', async (req, res) => {
   await ensureInit();
   res.json(await db.all('SELECT * FROM reviews WHERE is_approved=1 ORDER BY created_at DESC'));
 });
 
+app.get('/api/admin/reviews', authMiddleware, async (req, res) => {
+  await ensureInit();
+  res.json(await db.all('SELECT * FROM reviews ORDER BY created_at DESC'));
+});
+
 app.post('/api/reviews', async (req, res) => {
   await ensureInit();
   const { name, rating, juice_type, comment } = req.body;
+  if (!name || !rating || !comment) return res.status(400).json({ error: 'Missing fields' });
   const r = await db.execute('INSERT INTO reviews(name,rating,juice_type,comment) VALUES(?,?,?,?)', [name, rating, juice_type || '', comment]);
   res.json({ id: Number(r.lastInsertRowid), success: true });
+});
+
+app.put('/api/admin/reviews/:id/approve', authMiddleware, async (req, res) => {
+  await ensureInit();
+  await db.execute('UPDATE reviews SET is_approved=? WHERE id=?', [req.body.is_approved ? 1 : 0, req.params.id]);
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/reviews/:id', authMiddleware, async (req, res) => {
+  await ensureInit();
+  await db.execute('DELETE FROM reviews WHERE id=?', [req.params.id]);
+  res.json({ success: true });
 });
 
 app.get('/api/juice-images', async (req, res) => {
@@ -170,14 +231,23 @@ app.get('/api/juice-images', async (req, res) => {
 app.post('/api/admin/juice-images/:type', authMiddleware, upload.single('image'), async (req, res) => {
   await ensureInit();
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  // Note: On Vercel serverless, file storage is not persistent. 
-  // You would ideally use Cloudinary or S3 here.
   const type = req.params.type;
   const filename = req.file.filename;
   const exists = await db.get('SELECT id FROM juice_images WHERE juice_type=?', [type]);
   if (exists) await db.execute('UPDATE juice_images SET filename=?,updated_at=CURRENT_TIMESTAMP WHERE juice_type=?', [filename, type]);
   else await db.execute('INSERT INTO juice_images(juice_type,filename) VALUES(?,?)', [type, filename]);
   res.json({ filename });
+});
+
+// Real-time SSE dummy for serverless compatibility
+app.get('/api/admin/stream', authMiddleware, (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  res.write(': connected\n\n');
+  // In serverless, this connection will likely timeout after 10-60s.
+  // The client will reconnect automatically.
 });
 
 module.exports = app;
